@@ -1,0 +1,136 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leeyamsworld RSS Item Extractor</title>
+<style>
+body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+textarea { box-sizing: border-box; width: 100%; min-height: 240px; margin: 8px 0; font-family: monospace; }
+button { padding: 10px 16px; margin: 4px 4px 4px 0; cursor: pointer; }
+#status { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Leeyamsworld RSS Item Extractor</h1>
+<p>Fetch article pages and convert their HTML into RSS item blocks.</p>
+
+<label for="urls">Article URLs (one per line)</label>
+<textarea id="urls">https://leeyamsworldweb.pages.dev/blog/childrens-evanglism
+https://leeyamsworldweb.pages.dev/blog/buzzwords
+https://leeyamsworldweb.pages.dev/blog/ads
+https://leeyamsworldweb.pages.dev/blog/generative-ai
+https://leeyamsworldweb.pages.dev/blog/youtube-is-over
+https://leeyamsworldweb.pages.dev/blog/bees
+https://leeyamsworldweb.pages.dev/blog/oldvsnew.htm
+https://leeyamsworldweb.pages.dev/blog/catsvscomb.html
+https://leeyamsworldweb.pages.dev/blog/skydance-merger.html</textarea>
+
+<button id="generate">Extract HTML</button>
+<button id="copy">Copy XML</button>
+<p id="status">Ready.</p>
+
+<label for="output">Generated RSS items</label>
+<textarea id="output" placeholder="Generated &lt;item&gt; blocks will appear here..."></textarea>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function escapeCDATA(html) {
+  return html.replace(/\]\]>/g, ']]]]><![CDATA[>');
+}
+
+function extractContent(doc) {
+  // Prefer the article itself over the whole page.
+  const selectors = [
+    'article',
+    '.post-content',
+    '.entry-content',
+    '.blog-post',
+    'main',
+    '[role="main"]'
+  ];
+
+  for (const selector of selectors) {
+    const element = doc.querySelector(selector);
+    if (element && element.innerHTML.trim()) {
+      return element.innerHTML.trim();
+    }
+  }
+
+  return doc.body ? doc.body.innerHTML.trim() : '';
+}
+
+async function extractOne(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const source = await response.text();
+  const doc = new DOMParser().parseFromString(source, 'text/html');
+
+  const title =
+    doc.querySelector('article h1')?.textContent.trim() ||
+    doc.querySelector('main h1')?.textContent.trim() ||
+    doc.querySelector('h1')?.textContent.trim() ||
+    doc.querySelector('meta[property="og:title"]')?.content ||
+    doc.title ||
+    url;
+
+  const content = extractContent(doc);
+
+  if (!content) {
+    throw new Error('No HTML content found');
+  }
+
+  return `<item>
+  <title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</title>
+  <content:encoded><![CDATA[${escapeCDATA(content)}]]></content:encoded>
+</item>`;
+}
+
+$('generate').addEventListener('click', async () => {
+  const urls = $('urls').value
+    .split(/\n/)
+    .map(url => url.trim())
+    .filter(Boolean);
+
+  $('output').value = '';
+  $('status').textContent = 'Fetching pages...';
+
+  const results = await Promise.all(urls.map(async url => {
+    try {
+      const item = await extractOne(url);
+      return { url, item };
+    } catch (error) {
+      return { url, error: error.message };
+    }
+  }));
+
+  const successful = results.filter(result => result.item);
+  const failed = results.filter(result => result.error);
+
+  $('output').value = successful.map(result => result.item).join('\n\n');
+
+  $('status').textContent =
+    `Extracted: ${successful.length}/${urls.length}\n` +
+    (failed.length
+      ? 'Failed pages:\n' + failed.map(r => `${r.url}\n  ${r.error}`).join('\n')
+      : 'All pages extracted successfully.');
+});
+
+$('copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('output').value);
+    $('status').textContent += '\nXML copied to clipboard!';
+  } catch {
+    $('output').focus();
+    $('output').select();
+    $('status').textContent += '\nSelect the output and copy it manually.';
+  }
+});
+</script>
+</body>
+</html>
